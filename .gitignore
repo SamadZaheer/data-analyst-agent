@@ -1,0 +1,20 @@
+# Virtual environment (recreated on each machine from requirements.txt)
+.venv/
+
+# Secrets - API keys
+.env
+.streamlit/secrets.toml
+
+# Data and database files (rebuilt by the data-loading script)
+data/
+*.duckdb
+*.duckdb.wal
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Editor and OS files
+.vscode/
+.DS_Store
+Thumbs.db
