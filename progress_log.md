@@ -78,3 +78,45 @@ Paste a new entry at the bottom at the end of each chat. Newest entry = where I 
 - LLM APIs are stateless: each call is independent, so the agent's "memory" (conversation history) must be kept and resent by my code. This is why the agent needs a loop.
 
 **Next step:** Step 3: Choose a public Queensland/Australian dataset, write a data-loading script (pandas → DuckDB), and write 5 questions with answers I've checked myself.
+
+## Entry 3 — Step 3: Data chosen and loaded (30 Sep – 2 Oct 2026)
+**Done:**
+- Chose Queensland road crash data (TMR, data.qld.gov.au, CC BY 4.0).
+- Downloaded 6 CSVs into `data/raw/`; links saved in `datasources.md`.
+- Explored each file with pandas and identified each table's grain.
+- Wrote `load_data.py`: downloads missing files, cleans, builds `data/crashes.duckdb` from scratch (idempotent).
+- Ran consistency checks and reconciliations; wrote 5 hand-checked test questions.
+
+**Decisions:**
+- 5 tables: `crashes` (row-level, 1 row = 1 crash, 415,407 rows, 42 cols) + 4 aggregated tables with `agg_` prefix (casualties, driver_involvement, restraint_helmet_use, crash_factors).
+- Dropped `_d_vehicle_involvement` (duplicates the crash table's vehicle counts; one source of truth per question).
+- Dropped 11 crash columns (extra geography levels, detailed DCA codes) to keep the schema simple for the agent.
+- Standardised names: all lowercase snake_case; one `police_region` column everywhere; consistent `count_casualty_*` names; casualty severity values mapped to crash wording (Fatality → Fatal, etc.).
+- Added `crash_month_num` (month names sort alphabetically).
+- `exploration.txt` added to `.gitignore` (regenerable output).
+- Deployment data size (213 MB raw CSV) to be decided in Step 9.
+
+**Files created:**
+- `explore_data.py` (shape/types/sample of each CSV), `explore_checks.py` (year × severity crosstab)
+- `load_data.py` (pipeline), `sql.py` (run a SQL query from the terminal, read-only)
+- `datasources.md` (download links), `test_questions.md` (5 questions + data caveats)
+
+**Data findings (caveats for the system prompt):**
+- Property-damage-only crashes only included up to 2010 (drop to 0 from 2011 is not real).
+- 2025 covers Jan–Jun only.
+- 'Fatal' severity counts crashes; `count_casualty_fatality` counts people (2024: 273 fatal crashes, 302 deaths).
+- `agg_` tables need `SUM(count_crashes)` / `SUM(casualty_count)`, not `COUNT(*)`.
+- `police_region` has an "Unknown" value; police regions ≠ LGAs ("Brisbane"); some LGA names are outdated ("Moreton Bay Region").
+- Minor-injury counts drop sharply 2007–2015 (likely a recording change, not a real trend).
+
+**Checks passed:**
+- All 8 police regions spelled identically in all 5 tables.
+- `agg_crash_factors` totals for 2024 match `crashes` exactly (273 / 7051 / 4409 / 2625).
+- Deaths in 2024 match across `crashes` and `agg_casualties` (302).
+
+**Concepts learned:**
+- Grain: what one row represents; row-level vs pre-aggregated tables; look for ID columns and count columns.
+- Idempotent pipelines; raw data never edited; fail loudly on unexpected values.
+- Reconciliation as a data-quality check; SQL row order isn't guaranteed without ORDER BY.
+
+**Next step:** Step 4 — Write the tools: `get_schema()` and `run_sql(query)` (SELECT-only, read-only, row limit).
