@@ -127,3 +127,19 @@ ORDER BY 1
 - `agg_` tables are pre-aggregated: use `SUM(count_crashes)` / `SUM(casualty_count)`, never `COUNT(*)`.
 - Police regions and LGAs are different geographies with overlapping names (e.g. "Brisbane").
 - Some LGA names are out of date (e.g. "Moreton Bay Region").
+
+### Schema findings (Step 4): add to the system prompt in Step 6
+- **Speed limits are buckets, not exact values:** `crash_speed_limit` is text with values
+  '0 - 50 km/h', '60 km/h', '70 km/h', '80 - 90 km/h', '100 - 110 km/h'.
+  A question about "100 km/h zones" can only use the '100 - 110 km/h' bucket; say so in the answer.
+- **Road user categories differ between tables:** `agg_casualties.casualty_road_user_type` has
+  'Driver', 'Passenger', 'Pedestrian', 'Bicyclist', 'Motorcyclist', 'Other'.
+  `agg_restraint_helmet_use` only has 'Vehicle Occupant' (drivers + passengers merged),
+  'Bicyclist', 'Motorcyclist'. It has no pedestrians.
+- **'Hit pedestrian' is in two columns:** both `crash_type` and `crash_nature` have it.
+  Counts may differ; check both before choosing.
+- **Month ordering:** `crash_month` is text and sorts alphabetically (April, August, ...).
+  Always sort by `crash_month_num`.
+- **Yes/No flags are text:** all `involving_*` columns use 'Yes'/'No', not TRUE/FALSE or 'Y'/'N'.
+- **NULL means "not applicable":** NULL is the most common value in `crash_street_intersecting`
+  (crash not at an intersection) and `state_road_name` (not on a state road).
