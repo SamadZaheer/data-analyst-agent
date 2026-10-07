@@ -14,7 +14,7 @@ def _connect():
         raise FileNotFoundError(
             f"Database not found at {DB_PATH}. Run load_data.py first."
         )
-    return duckdb.connect(str(DB_PATH), read_only=True)
+    return duckdb.connect(str(DB_PATH), read_only=True, config={"enable_external_access": False},)
 
 
 def _describe_text_columns(con, table: str, column: str) -> str:
@@ -63,7 +63,62 @@ def get_schema() -> str:
 
     return "\n".join(lines).strip()
 
+
+MAX_ROWS = 100 # most rows the LLM sees from one query
+
+def _query_check(query: str) -> str | None:
+    """Return an error message if the query isn't exactly one SELECT, else None."""
+    try:
+        statements = duckdb.extract_statements(query)
+    except duckdb.Error as e:
+        return f"SQL could not be parsed: {e}"
+
+    if len(statements) != 1:
+        return f"Exactly one SQL statement is allowed; got {len(statements)}."
+    if statements[0].type != duckdb.StatementType.SELECT:
+        return f"Only SELECT queries are allowed; got {statements[0].type.name}."
+    return None
+
+def run_sql(query: str) -> dict:
+    "Run a read-only SELECT query and return at most MAX_ROWS."
+    problem = _query_check(query)
+    if problem:
+        return {"ok": False, "error": problem}
+
+    try:
+        with _connect() as con:
+            df = con.sql(query).limit(MAX_ROWS + 1).df()
+    except duckdb.Error as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    truncated = len(df) > MAX_ROWS
+    return {"ok": True, "data": df.head(MAX_ROWS), "truncated": truncated}
+
+
 if __name__ == "__main__":
-    schema = get_schema()
-    print(schema)
-    print(f"\n~{len(schema) // 4:,} tokens (rough estimate: 1 tokens = 4 characters)")
+    tests = {
+        "normal query": "SELECT crash_year, COUNT(*) AS crashes FROM crashes "
+                        "GROUP BY crash_year ORDER BY crash_year",
+        "wrong value (silent zero)": "SELECT COUNT(*) FROM crashes WHERE crash_severity = 'Fatality'",
+        "too many rows": "SELECT * FROM crashes",
+        "column typo": "SELECT crash_yr FROM crashes",
+        "DROP": "DROP TABLE crashes",
+        "sneaky second statement": "SELECT 1; DROP TABLE crashes",
+        "read a local file": "SELECT * FROM read_csv('requirements.txt')",
+    }
+
+    for name, query in tests.items():
+        result = run_sql(query)
+        print(f"\n=== {name} ===")
+        if result["ok"]:
+            print(result["data"].head(5))
+            print(f"rows returned: {len(result["data"])}, truncated: {result["truncated"]}")
+        else:
+            print(f"BLOCKED / ERROR:", result["error"])
+
+    print("\n=== layer 1 alone (bypassing the SELECT check) ===")
+    try:
+        with _connect() as con:
+            con.execute("DELETE FROM crashes")
+    except duckdb.Error as e:
+        print(f"Read-only connection refused it: {e}")

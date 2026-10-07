@@ -120,3 +120,36 @@ Paste a new entry at the bottom at the end of each chat. Newest entry = where I 
 - Reconciliation as a data-quality check; SQL row order isn't guaranteed without ORDER BY.
 
 **Next step:** Step 4 — Write the tools: `get_schema()` and `run_sql(query)` (SELECT-only, read-only, row limit).
+
+## Entry 4 — Step 4: Tools written (5–7 Oct 2026)
+**Done:**
+- Wrote `tools.py` with two agent tools: `get_schema()` and `run_sql(query)`.
+- `get_schema()`: lists every table (with row count), column and type; for VARCHAR columns, lists all values if ≤ 25 distinct, otherwise the distinct count + 3 most common values. Output ~2,050 tokens. Cached with `@lru_cache`.
+- `run_sql()`: three guardrail layers, all tested: (1) read-only connection with `enable_external_access: False`, (2) `duckdb.extract_statements()` check for exactly one SELECT, (3) 100-row cap (fetch 101 to detect truncation).
+- Test suite in `tools.py` (`python tools.py`): normal query, silent wrong value, truncation, column typo, DROP, multi-statement, local file read, read-only bypass test. All passed.
+
+**Decisions:**
+- Tools return plain text (schema) / a dict (`{"ok", "data", "truncated"}` or `{"ok": False, "error"}`), never raise on SQL errors, so errors can go back to the LLM for self-correction (Step 6).
+- `run_sql` keeps a DataFrame (not text) so Streamlit can chart it later; converting to text for the LLM happens in Step 5.
+- Schema = facts the database can report automatically; human knowledge (caveats) goes in the system prompt.
+- Fresh connection per call (cheap in DuckDB, avoids file locks with Streamlit).
+
+**Files created/changed:**
+- `tools.py` (new).
+- `test_questions.md`: added "Schema findings (Step 4)" caveats.
+
+**Problems solved:**
+- Top-3 values showed `None`: the query was missing `WHERE ... IS NOT NULL` (Python `None` = SQL NULL; a string would print as `'None'`).
+
+**Data findings (for the system prompt):**
+- Speed limits are buckets ('100 - 110 km/h'); road user categories differ between `agg_casualties` and `agg_restraint_helmet_use` (no pedestrians in the latter); 'Hit pedestrian' in both `crash_type` and `crash_nature`; sort months by `crash_month_num`; `involving_*` flags are 'Yes'/'No' text; NULL is the most common value in `crash_street_intersecting` and `state_road_name`.
+- Always alias aggregates (unnamed `COUNT(*)` comes back as `count_star()`).
+
+**Concepts learned:**
+- A tool is a plain function; the LLM only *requests* calls, and my code decides whether to run them.
+- Silent wrong answers (guessed categorical values) are a key text-to-SQL failure; real values in the schema are the fix.
+- Defence in depth; read-only ≠ safe (file access must be blocked too, as a prompt-injection defence); parse SQL rather than string-match it.
+- Token budgeting: measure the size of anything sent on every request.
+- Handy command: `python -c "from tools import get_schema; print(get_schema())"`.
+
+**Next step:** Step 5: Build the agent loop (describe tools to Gemini, disable AFC, run requested tools, send results back, cap at ~10 steps, print each step in the terminal).
