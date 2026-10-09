@@ -153,3 +153,40 @@ Paste a new entry at the bottom at the end of each chat. Newest entry = where I 
 - Handy command: `python -c "from tools import get_schema; print(get_schema())"`.
 
 **Next step:** Step 5: Build the agent loop (describe tools to Gemini, disable AFC, run requested tools, send results back, cap at ~10 steps, print each step in the terminal).
+
+## Entry 5 — Step 5: Agent loop built (8–9 Oct 2026)
+**Done:**
+- Wrote `agent.py`: tool declarations, dispatcher, and the agent loop. Runs in the terminal with an interactive question prompt.
+- Tool declarations (`FunctionDeclaration` + JSON Schema params) for `get_schema` (no params, "call this FIRST") and `run_sql(query)` (mentions 100-row cap and that errors come back).
+- `execute_tool(name, args)`: maps Gemini's request to the real function, converts the DataFrame to text (`to_string(index=False)`), adds a truncation note, never raises; handles unknown tool names and `None` args.
+- `ask(question)`: loop with `MAX_STEPS = 10`; appends Gemini's reply unchanged, runs every requested tool, returns results as `FunctionResponse` parts (matched by call `id`) in one turn; stops on a reply with no function calls; handles empty responses.
+- Prints each step (tool name, SQL, result preview) for transparency.
+
+**Test results:**
+- "How many fatal crashes were there in 2024?" → 273 ✅ (3 requests: schema → SQL → answer).
+- "How many people died in road crashes in 2024?" → 302 ✅ (4 requests); Gemini cross-checked `crashes` vs `agg_casualties` on its own.
+- Dispatcher tests: DROP blocked, unknown tool handled.
+
+**Decisions:**
+- AFC explicitly disabled; we pass declarations, not Python functions, so only my code runs tools.
+- Gemini's reply content is appended as-is (never rebuilt) so thought signatures and call IDs survive.
+- Each question starts a fresh conversation (no memory between questions); multi-turn to be decided in Step 8.
+- Clicked "Don't Show Again" on VS Code's `python.terminal.useEnvFile` pop-up (code loads `.env` itself, per Step 2 decision).
+
+**Files created:**
+- `agent.py` (new).
+
+**Observations for Step 6 / later:**
+- Gemini didn't alias `COUNT(*)` (`count_star()`): add "always alias aggregates" to the system prompt.
+- Answers are Markdown (renders in Streamlit).
+- Count columns come back as floats (`302.0`): cast count columns to `Int64` in `load_data.py`.
+- Self-checking happened spontaneously; make it an instruction in the system prompt.
+
+**Concepts learned:**
+- Function calling: the model outputs a structured request (name + JSON args); it never executes anything.
+- Tool descriptions and tool outputs are part of the prompt.
+- Conversation = list of `Content` (role + parts: text / function_call / function_response); the whole list is resent every call (stateless API), so tokens grow per step.
+- Two exits from the loop: natural (no tool requested) and safety (step cap).
+- Thought signatures must be sent back unchanged; call IDs match results to requests (parallel calls).
+
+**Next step:** Step 6: System prompt (data caveats, check schema first, show SQL, alias aggregates, admit when data can't answer), SQL errors fed back for self-correction, graceful rate-limit (429) handling.
