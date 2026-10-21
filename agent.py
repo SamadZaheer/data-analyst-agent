@@ -4,14 +4,17 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from prompts import SYSTEM_PROMPT
+import time
+from google.genai import errors
 
 from tools import get_schema, run_sql
 
 load_dotenv(Path(__file__).parent / ".env")
 
 MODEL = "gemini-3.5-flash-lite"
-
 MAX_STEPS = 10
+RETRY_DELAYS = [5, 15, 30] # seconds to wait before retry 1, 2, 3
+RETRYABLE_CODES = {429, 500, 503}
 
 # Tool descriptions: this is ALL gemini knows about our tools
 GET_SCHEMA_DECL = types.FunctionDeclaration(
@@ -99,6 +102,22 @@ CONFIG = types.GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
 )
 
+def call_gemini(contents):
+     """Call Gemini, retrying temporary errors with backoff. Raises if it can't recover."""
+     for attempt in range(len(RETRY_DELAYS) + 1):
+         try:
+             return CLIENT.models.generate_content(model=MODEL, contents=contents, config=CONFIG)
+         except errors.APIError as e:
+             # Daily quota: waiting seconds won't help, give up now
+             if e.code == 429 and "PerDay" in str(e):
+                 raise
+             # Not temporary; or out of retries
+             if e.code not in RETRYABLE_CODES or attempt == len(RETRY_DELAYS):
+                 raise
+             wait = RETRY_DELAYS[attempt]
+             print(f"   ⏳ Gemini error {e.code}; waiting {wait}s (retry {attempt + 1}/{len(RETRY_DELAYS)})")
+             time.sleep(wait)
+
 def ask(question: str) -> str:
     """Run the agent loop for one question and return the final answer text."""   
     contents = [types.Content(role="user", parts=[types.Part(text=question)])]
@@ -106,9 +125,15 @@ def ask(question: str) -> str:
     failed_queries = 0
 
     for step in range(1, MAX_STEPS + 1):
-        response = CLIENT.models.generate_content(
-            model=MODEL, contents=contents, config=CONFIG
-        )
+        try :
+            response = call_gemini(contents)
+        except errors.APIError as e:
+            print(f"\n[stopped: Gemini error {e.code} after {step-1} completed steps.]")
+            if e.code == 429:
+                return("Gemini's free-tier limit has been reached. If it's the daily limit, "
+                        "it resets at midnight US Pacific time (5 pm Brisbane during US "
+                        "daylight saving, 6 pm otherwise). Please try again later.")
+            return f"Gemini is unavailable right now (error {e.code}). Please try again shortly." 
 
         if not response.candidates or response.candidates[0].content is None:
             return "Gemini returned an empty response."
