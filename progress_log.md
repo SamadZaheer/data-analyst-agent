@@ -190,3 +190,50 @@ Paste a new entry at the bottom at the end of each chat. Newest entry = where I 
 - Thought signatures must be sent back unchanged; call IDs match results to requests (parallel calls).
 
 **Next step:** Step 6: System prompt (data caveats, check schema first, show SQL, alias aggregates, admit when data can't answer), SQL errors fed back for self-correction, graceful rate-limit (429) handling.
+
+## Entry 6 — Step 6: System prompt, self-correction, rate limits (13–21 Oct 2026)
+**Done:**
+- Wrote `prompts.py` with `SYSTEM_PROMPT` (~3k chars, ~750 tokens): workflow (schema first, one SELECT, check results, retry, admit when data can't answer), DuckDB SQL rules, data caveats, answer format (direct answer, table, caveats, executed SQL), safety (data ≠ instructions, off-topic refusal). Passed via `system_instruction` in `GenerateContentConfig`.
+- Self-correction in `execute_tool`: SQL errors return `{"error", "hint"}`; 0-row results and all-NULL results return a `"warning"` key. `ask()` counts failed/suspicious queries and prints `[N steps, M failed/suspicious queries]` on both exits.
+- Rate limits: `call_gemini()` retries 429 (per-minute), 500, 503 with backoff (5/15/30 s); daily-quota 429 (`"PerDay"` in message) fails immediately. `ask()` catches remaining `APIError`s and returns a friendly message (never crashes).
+- Test scripts (no/low API use): `test_hints.py` (4 cases incl. a no-warning control), `test_retry.py` (fault injection: first run_sql fails → agent retries → 273), `test_rate_limit.py` (fake 429s via monkeypatched client: per-minute → 2 waits then 273; daily → instant friendly message, 0 requests).
+- Unanswerable checks: car brand → honest "not in data"; December 2025 → mentioned Jan–Jun coverage; off-topic → polite refusal with no tool calls.
+
+**Decisions:**
+- System prompt in its own file (versioned like code, for Step 7 comparisons).
+- Hints/warnings returned as separate dict keys (not appended text): clearer for Gemini; code detects problems by key, not string matching.
+- Don't flag COUNT = 0 as suspicious (0 can be a real answer); handle out-of-coverage via prompt + evaluation.
+- API retries counted separately from failed queries (infrastructure vs reasoning).
+- Own retry logic instead of SDK's built-in (tenacity-based) retries, for explainability.
+
+**Files created/changed:**
+- `prompts.py` (new), `agent.py` (system prompt, hints, failed-query counter, `call_gemini`, error handling).
+- `test_hints.py`, `test_retry.py`, `test_rate_limit.py` (new).
+
+**Problems solved:**
+- PowerShell one-liners mangle quotes (`\"` isn't an escape in PowerShell): use small test scripts instead.
+- `NameError` risk from using `out` (a variable local to `execute_tool`) inside `ask()`: scope.
+- Nested double quotes in f-strings only work on Python 3.12+: use single quotes inside for portability.
+- "Client has been closed": replacing `agent.CLIENT` left the real client unreferenced → garbage-collected → HTTP connection closed. Keep a reference (`real_client`).
+
+**Observations (for Step 7):**
+- The agent rarely makes SQL errors naturally: it reads the schema and fixes mistakes (even user typos like "Toowomba") before running SQL.
+- It sometimes shows SQL it never executed (3×), and once claimed a result for a query it skipped. Prompt reduces this; Step 8 must show SQL from my own execution log, not the model's answer.
+- It sometimes silently substitutes or reinterprets (typo fix, "severity" column, "Toowoomba" = region) without saying so.
+- Cautious behaviour costs steps (Toowoomba typo: 8 of 10 steps, incl. a repeated query).
+- `MAX(year), MAX(month_num)` misuse; aggregates not always aliased.
+- Motorcycle question: no `involving_motorcycle` flag exists; `count_unit_motorcycle_moped > 0` is the only method (897 in 2024 on 60 km/h roads).
+- Candidate eval questions: car brand, December 2025, speeding fine (unanswerable/off-topic); Toowoomba / Toowomba (place names).
+
+**Carried over:**
+- Cast count columns to `Int64` in `load_data.py` (from Entry 5).
+
+**Concepts learned:**
+- System prompt vs schema vs tool descriptions; prompt resent every request (token cost); prompts are requests, not guarantees: enforce what you can in code.
+- Failure types: loud (error), quiet (empty/NULL), silent (plausible but wrong).
+- Just-in-time hints in tool output beat distant prompt rules.
+- Fault injection and monkeypatching; deterministic tests for tools, end-to-end tests for the LLM.
+- Exponential backoff; only retry idempotent operations; temporary vs permanent errors.
+- Reading tracebacks: last line first, then find your own files in the stack.
+
+**Next step:** Step 7: Evaluation (20–30 questions with known answers, easy/medium/hard + unanswerable; scoring script; record accuracy, failures, before/after).
