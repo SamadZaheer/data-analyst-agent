@@ -83,17 +83,24 @@ def run_sql(query: str) -> dict:
     "Run a read-only SELECT query and return at most MAX_ROWS."
     problem = _query_check(query)
     if problem:
-        return {"ok": False, "error": problem}
+        return{"ok": False, "error": problem}
 
     try:
         with _connect() as con:
-            df = con.sql(query).limit(MAX_ROWS + 1).df()
+            rel = con.sql(query).limit(MAX_ROWS + 1)
+            df = rel.df()
+            col_types = [str(t) for t in rel.types]
     except duckdb.Error as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return{"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    # SUM() of an integer column returns HUGEINT (128-bit). Pandas has no
+    # 128-bit integer, so it arrives as a float (302.0). Make it an integer again.
+    for i, col_type in enumerate(col_types):
+        if col_type == "HUGEINT":
+            df.isetitem(i, df.iloc[:, i].astype("Int64"))
 
     truncated = len(df) > MAX_ROWS
-    return {"ok": True, "data": df.head(MAX_ROWS), "truncated": truncated}
-
+    return{"ok": True, "data": df.head(MAX_ROWS), "truncated": truncated}
 
 if __name__ == "__main__":
     tests = {
@@ -112,7 +119,7 @@ if __name__ == "__main__":
         print(f"\n=== {name} ===")
         if result["ok"]:
             print(result["data"].head(5))
-            print(f"rows returned: {len(result["data"])}, truncated: {result["truncated"]}")
+            print(f"rows returned: {len(result['data'])}, truncated: {result['truncated']}")
         else:
             print(f"BLOCKED / ERROR:", result["error"])
 

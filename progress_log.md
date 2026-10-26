@@ -237,3 +237,43 @@ Paste a new entry at the bottom at the end of each chat. Newest entry = where I 
 - Reading tracebacks: last line first, then find your own files in the stack.
 
 **Next step:** Step 7: Evaluation (20–30 questions with known answers, easy/medium/hard + unanswerable; scoring script; record accuracy, failures, before/after).
+
+## Entry 7a — Step 7 (part 1): Test set and gold answers (23–26 Oct 2026)
+**Done:**
+- Designed the evaluation approach (see Decisions).
+- Wrote `eval_cases.py`: 26 cases (dev: 6 easy, 6 medium, 4 hard, 4 unanswerable; holdout: 1 easy, 2 medium, 2 hard, 1 unanswerable), each with question, gold SQL, check type, optional `must_include`, and a `tests` note.
+- Wrote `check_gold.py`: validates every case's fields, runs all gold SQL through `run_sql` (no API quota), prints results for hand-checking, flags oversized `numbers` results. All 26 pass.
+- Hand-verified gold answers; all earlier known answers match (273, 302, 176, 897, 13,350/12,689, Brisbane City).
+- Fixed float counts (302.0) in `run_sql()`.
+
+**Decisions:**
+- Scoring = deterministic rule-based checks on the agent's final answer: `numbers` (all gold numbers appear), `top` (first value of gold result appears), `refuse` (agent says data can't answer), plus optional `must_include` words.
+- Execution accuracy (did any executed query return the gold numbers?) used only as a diagnostic: "wrong SQL" vs "right SQL, wrong report".
+- No LLM-as-judge (costs quota, non-deterministic, a second model to trust).
+- Dev/holdout split (20/6) to detect overfitting; holdout run only once, at the end.
+- Expected answers come from running the gold SQL at eval time (not hard-coded), so they stay in sync with the database.
+- Test cases drafted with Claude's help from the real schema; every gold answer verified by hand.
+
+**Files created/changed:**
+- `eval_cases.py`, `check_gold.py` (new).
+- `tools.py`: `run_sql()` reads column types from the DuckDB relation and converts HUGEINT columns to pandas `Int64`.
+- `schema.txt` (output of `get_schema()`, gitignored, added to Project files).
+
+**Problems solved:**
+- 302.0 floats: NOT a loading problem (counts are already BIGINT). Cause: DuckDB `SUM(BIGINT)` returns HUGEINT (128-bit), which pandas converts to float. Fixed once in `run_sql()`, so every caller (agent, gold check) benefits. Carried-over Int64 task from Entry 5 closed.
+- `KeyError: 'error'` in `tools.py` tests: success dict returned `"ok": False` (typo). The existing test suite caught it immediately.
+- Replaced `top_month_2024` (August led July by only 5 crashes, too fragile) with `top_day_2024` (Friday leads by 91); Toowoomba gold SQL now uses the exact LGA name 'Toowoomba Region'.
+
+**Concepts learned:**
+- Gold SQL / gold standard / ground truth; an accuracy number is only as good as the answer key.
+- Verifying gold answers: second method, parts sum to whole, published figures, sanity of size, read question and SQL side by side.
+- Evaluation failures may be bad labels, not just a bad agent (Spider/BIRD have label errors too).
+- Execution accuracy vs answer-level checks vs LLM-as-judge.
+- Overfitting a prompt to a test set; holdout sets.
+- Regression tests; test a hypothesis before applying a fix.
+
+**Notes for later:**
+- A full run is about 120 requests (~3–4 runs/day on flash-lite). `gemini-3.8-flash` (20 RPD) can only do a small subset.
+- Plan to add a fixed refusal phrase to the system prompt so `refuse` cases can be scored reliably.
+
+**Next step:** Step 7 (part 2): make `ask()` return a structured result (final answer, executed SQL + results log, steps, failed queries). Then: scoring functions tested without the API → eval runner (pacing, subset runs, results saved with model + prompt version) → baseline run → fix → re-run → holdout once.
