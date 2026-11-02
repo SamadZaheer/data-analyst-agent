@@ -20,18 +20,31 @@ class FlakyModels:
         return self.real.generate_content(**kwargs)
 
 class FakeClient:
-        def __init__(self, models):
-            self.models = models
+    def __init__(self, models):
+        self.models = models
 
 real_client = agent.CLIENT          
 real_models = real_client.models
 
 print("=== Test 1: per-minute limit twice, then OK (expect 2 waits, then 273) ===")
-agent.CLIENT = FakeClient(FlakyModels(real_models, failures=2, 
-                                       message="Quota exceeded: GenerateRequestsPerMinutePerProjectPerModel-FreeTier"))
-print(agent.ask("How many fatal crashes were there in 2024?"))
+agent.CLIENT = FakeClient(FlakyModels(real_models, failures=2,
+                                      message="Quota exceeded: GenerateRequestsPerMinutePerProjectPerModel-FreeTier"))
+r1 = agent.ask("How many fatal crashes were there in 2024?")
+print("ANSWER:", r1.answer)
+
+assert r1.status == "answered", f"status was {r1.status}"
+assert "273" in r1.answer, "wrong final answer"
+assert r1.seconds >= 3, "expected ~3s of waiting (1s + 2s): did the retries happen?"
+print("✅ Test 1 passed")
 
 print("\n=== Test 2: daily limit (expect NO waits, friendly message) ===")
 agent.CLIENT = FakeClient(FlakyModels(real_models, failures=99,
                                       message="Quota exceeded: GenerateRequestsPerDayPerProjectPerModel-FreeTier"))
-print(agent.ask("How many fatal crashes were there in 2024?"))
+r2 = agent.ask("How many fatal crashes were there in 2024?")
+print("ANSWER:", r2.answer)
+
+assert r2.status == "api_error", f"status was {r2.status}"
+assert r2.error_code == 429
+assert r2.steps == 0, "no request should have succeeded"
+assert r2.seconds < 1, "daily limit should fail instantly, not wait"
+print("✅ Test 2 passed")
