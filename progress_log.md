@@ -277,3 +277,42 @@ Paste a new entry at the bottom at the end of each chat. Newest entry = where I 
 - Plan to add a fixed refusal phrase to the system prompt so `refuse` cases can be scored reliably.
 
 **Next step:** Step 7 (part 2): make `ask()` return a structured result (final answer, executed SQL + results log, steps, failed queries). Then: scoring functions tested without the API → eval runner (pacing, subset runs, results saved with model + prompt version) → baseline run → fix → re-run → holdout once.
+
+## Entry 7b — Step 7 (part 2): Structured results + number scorer (26 Oct – 9 Nov 2026)
+**Done:**
+- `ask()` now returns an `AgentResult` dataclass: question, answer, status (`answered` / `max_steps` / `api_error` / `empty_response`), steps, failed_queries, `queries` (list of `QueryRecord`: step, SQL, ok, DataFrame, error, warning), error_code, error_message, seconds. All exits go through one `finish()` helper.
+- Split `execute_tool` into `_run_tool()` → `(response_for_gemini, DataFrame)`. Gemini gets text, the log keeps the real DataFrame. `execute_tool` is kept as a thin wrapper so `test_hints.py` still works.
+- Added `verbose` flag to `ask()` (quiet mode for the eval runner).
+- API errors: the raw message is kept in `error_message`. User messages now differ by error family: 429 = quota, 5xx = try again, other 4xx = bug in the app.
+- Rewrote `test_retry.py` and `test_rate_limit.py` with assertions (fault actually injected, status, failed-query count, `queries[0].ok is False`, timing).
+- Wrote `scoring.py` (numbers check) and `test_scoring.py` (11 cases + helper asserts, all passing).
+
+**Decisions:**
+- Execution log built by my code, not the model's account. Used for both the eval (execution accuracy) and Step 8's "show SQL" panel.
+- `status` separates infrastructure failures from reasoning failures: an `api_error` is excluded or re-run, never scored as a wrong answer.
+- `steps` counts only successful Gemini requests.
+- Number scoring: extract numbers with a regex (commas removed) and compare as numbers, not substrings. Integers must match exactly; decimals may be rounded to 0–2 places. Code blocks are stripped first, so the echoed SQL can't satisfy a check.
+
+**Files created/changed:**
+- `agent.py` (dataclasses, `_run_tool`, new `ask()`, error handling, `RUN_SQL_DECL` fix).
+- `inspect_result.py`, `scoring.py`, `test_scoring.py` (new). `test_retry.py`, `test_rate_limit.py` (rewritten).
+
+**Problems solved:**
+- `RUN_SQL_DECL` declared `query` as `"type": "object"` (should be `"string"`), plus a "DecukDB" typo. Fixed before the baseline.
+- 400 "Requests ending with a model turn are not supported": the function-response append was mis-indented, so the conversation ended on the model's turn. Found by keeping and reading the raw API error; `steps=1` narrowed it to the first tool round.
+- `test_retry.py` was silently a no-op: it patched `execute_tool`, but `ask()` now calls `_run_tool`. Fixed by patching the right name and asserting the fault actually fired.
+- `failed_queries` didn't count SQL errors: the counting `if` was nested inside the warning `if`. Caught by an assertion, not by the (correct-looking) answer.
+
+**Observations:**
+- Same question → different SQL across runs (non-determinism): small before/after differences may be noise.
+- Free-tier latency varies a lot (3–5 s vs 26–30 s for the same question). Eval runs need per-question progress output.
+- Known scorer limitation (for the README): numbers written in words won't match.
+
+**Concepts learned:**
+- Dataclasses; mutable default arguments (`field(default_factory=list)`).
+- HTTP 4xx (my request is wrong, don't retry) vs 5xx (their server, retry).
+- Every request to the model must end with a user turn.
+- Monkeypatching replaces a *name*: patch the one the code actually calls.
+- Tests must check their own premise; assertions beat eyeballing output; test the scorer before trusting the score (include "should fail" cases).
+
+**Next step:** Step 7 (part 3): remaining checks (`top`, `refuse`, `must_include`) + a fixed refusal phrase in the system prompt, and the execution-accuracy diagnostic using `r.queries`, all unit-tested without the API. Then the eval runner (pacing, subset runs, results saved with model + prompt version) → baseline run.

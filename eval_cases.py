@@ -150,9 +150,8 @@ CASES = [
         "split": "dev",
         "question": "What percentage of fatal crashes in 2024 involved driver speed?",
         "gold_sql": """
-            SELECT ROUND(
-                100.0 * SUM(count_crashes) FILTER (WHERE involving_driver_speed = 'Yes')
-                / SUM(count_crashes), 1) AS pct_speed
+            SELECT 100.0 * SUM(count_crashes) FILTER (WHERE involving_driver_speed = 'Yes')
+                   / SUM(count_crashes) AS pct_speed
             FROM agg_crash_factors
             WHERE crash_year = 2024 AND crash_severity = 'Fatal'
         """,
@@ -203,7 +202,7 @@ CASES = [
               AND crash_severity <> 'Property damage only'
         """,
         "check": "numbers",
-        "must_include": ["property"],
+        "must_include": [("property", "PDO")],
         "tests": "Coverage change: PDO crashes dropped after 2010; must compare like with like (Q5).",
     },
     {
@@ -241,7 +240,7 @@ CASES = [
         "split": "dev",
         "question": "On average, how many people died per fatal crash in 2024?",
         "gold_sql": """
-            SELECT ROUND(SUM(count_casualty_fatality) / COUNT(*), 2) AS deaths_per_fatal_crash
+            SELECT SUM(count_casualty_fatality) / COUNT(*) AS deaths_per_fatal_crash
             FROM crashes
             WHERE crash_year = 2024 AND crash_severity = 'Fatal'
         """,
@@ -266,7 +265,7 @@ CASES = [
         "question": "How many crashes happened in December 2025?",
         "gold_sql": None,
         "check": "refuse",
-        "must_include": ["June"],
+        "must_include": [("June", "Jun")],
         "tests": "Outside coverage (2025 = Jan-Jun); must not answer 0.",
     },
     {
@@ -348,7 +347,7 @@ CASES = [
               AND crash_month_num <= 6
         """,
         "check": "numbers",
-        "must_include": ["June"],
+        "must_include": [("June", "Jun", "first half")],
         "tests": "Partial year: must compare Jan-Jun with Jan-Jun, not a full year with half a year.",
     },
     {
