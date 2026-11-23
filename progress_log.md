@@ -316,3 +316,45 @@ Paste a new entry at the bottom at the end of each chat. Newest entry = where I 
 - Tests must check their own premise; assertions beat eyeballing output; test the scorer before trusting the score (include "should fail" cases).
 
 **Next step:** Step 7 (part 3): remaining checks (`top`, `refuse`, `must_include`) + a fixed refusal phrase in the system prompt, and the execution-accuracy diagnostic using `r.queries`, all unit-tested without the API. Then the eval runner (pacing, subset runs, results saved with model + prompt version) → baseline run.
+
+## Entry 7c — Step 7 (part 3): Scoring complete (11–23 Nov 2026)
+**Done:**
+- Added a fixed refusal phrase: `REFUSAL_PHRASE` constant in `prompts.py` ("This question cannot be answered with the available data"), required by Workflow step 4. Partial answers must answer what they can and must not use the phrase.
+- `scoring.py` now has every check, each returning `(passed, reason)`:
+  - `is_refusal()` / `check_refuse()`: phrase match after `strip_code` and `_normalise` (lowercase, Markdown marks removed, whitespace collapsed to one space).
+  - `check_top()`: `gold_df.iloc[0, 0]` must appear in the **first paragraph** (`lead_paragraph()`), as a whole-word match for text or with `number_found` for numbers.
+  - `check_must_include()`: every item must appear in the prose; a tuple item means alternatives (OR); a single string is turned into a list.
+  - Shared helper `_contains()` (whole-word, normalised) used by `top` and `must_include`.
+  - `score_case(case, answer, gold_df)`: picks the main check through a `GOLD_CHECKS` dict, fails **false refusals** on answerable cases, ANDs in `must_include`, and raises `ValueError` for broken cases (unknown check, missing gold).
+  - `query_has_gold()`, `execution_match()`, `diagnose()`: execution-accuracy diagnostic using `r.queries` (`QueryRecord.data`). Labels: `correct`, `pass_unverified`, `reporting_error`, `sql_error`, `missed_refusal`.
+- `test_scoring.py`: 66 checks (14 numbers, 7 refusal + prompt guard, 9 top, 10 must_include, 11 score_case, 15 execution/diagnose), including "should fail" cases. All pass. No API or database needed.
+
+**Decisions:**
+- One source of truth for the refusal phrase (a constant plus a guard test asserting it's in `SYSTEM_PROMPT`). It's written out literally in the prompt, not inserted with an f-string, because braces in the prompt would break an f-string.
+- Strict contract: paraphrased refusals fail. This measures whether the agent follows the instruction.
+- `top` only checks the first paragraph (the "table trap": the gold value appearing in a supporting table must not count).
+- Gold SQL stores **unrounded** decimals; the scorer decides acceptable rounding.
+- `score_case` is pure (no DB/API): the runner passes `gold_df` in, and scoring can be re-applied to saved answers without re-running the agent.
+- `execution_match` uses `any()`: credit if any successful query got the gold data.
+
+**Problems found and fixed (all before any API run):**
+- **Prompt conflict:** the Safety rule told the agent to answer off-topic questions with a different reply, so `speeding_fine` and `prompt_injection` would have failed even when the agent behaved correctly. The Safety bullet now uses the same refusal sentence.
+- **Rounding loophole:** `round(1.11, 0) = 1`, so any "1" passed `deaths_per_fatal_crash_2024`; extra precision (1.106) failed. Fix: unrounded gold, and 1–3 decimal places allowed, with whole-number rounding only if |value| ≥ 10.
+- `_normalise` replaced whitespace with `""` instead of `" "` (made "can not" match). The tests passed anyway, so a case that catches it was added.
+- `check_top` read the wrong column (`iloc[0, 1]`). The ✅ rows were passing for the wrong reason; the reason text exposed it.
+- `must_include` alternatives typed as `["June", "Jun"]` (AND) instead of `[("June", "Jun")]` (OR). Caught by score_case tests; fixed in all 3 cases, including the holdout.
+- `QueryRecord` field is `data`, not `df`. Fakes in tests must match the real object.
+
+**Files changed:** `prompts.py`, `scoring.py`, `test_scoring.py`, `eval_cases.py` (unrounded gold SQL, `must_include` alternatives). Added `.gitattributes` (`* text=auto`) for consistent line endings on Windows and Mac.
+
+**Known scorer limitations (for the README):** matches words, not meaning ("Friday was not the busiest" passes); gold "Brisbane" would match "Brisbane City"; numbers written as words don't match; paraphrased refusals fail by design.
+
+**Concepts learned:**
+- Sentinel phrases as a contract between the LLM and code (vs structured JSON output).
+- Contradictory prompt instructions: the model picks one, and you can't predict which.
+- Read the reason, not just the tick; a test only proves something if a failing case exists.
+- Refactors protected by regression tests.
+- Lookup tables of functions; pure functions; failing loudly on bad test data.
+- Execution accuracy vs answer accuracy (Spider/BIRD); empty `all([])` is True.
+
+**Next step:** Step 7 (part 4): eval runner. Run the agent on the dev set (pacing for 15 RPM, subset runs, per-question progress), compute gold with `run_sql`, score with `score_case` and `diagnose`, exclude/re-run `api_error`s, and save results with model name + prompt version. Then the baseline run.
