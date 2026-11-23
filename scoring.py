@@ -132,3 +132,36 @@ def score_case(case: dict, answer: dict, gold_df: pd.DataFrame | None) -> tuple[
     mi_passed, mi_reason = check_must_include(answer, case.get("must_include"))
     reasons = [reason] if mi_reason == "nothing required" else [reason, mi_reason]
     return passed and mi_passed, "; ".join(reasons)
+
+def query_has_gold(df: pd.DataFrame | None, check: str, gold_df: pd.DataFrame) -> bool:
+    """Does one executed query's result contain the gold answers?"""
+    if df is None or df.empty or gold_df.empty:
+        return False
+    if check == "numbers":
+        found = gold_numbers(df)
+        return all(number_found(g, found) for g in gold_numbers(gold_df))
+    if check == "top":
+        top = gold_df.iloc[0,0]
+        first_row = df.iloc[0]
+        if isinstance(top, str):
+            return any(isinstance(v, str) and _normalise(v) == _normalise(top) for v in first_row)
+        return number_found(float(top), gold_numbers(df.iloc[[0]]))
+    return False
+
+def execution_match(case: dict, queries: list, gold_df: pd.DataFrame | None) -> bool |None:
+    """Did ANY successful query return the gold answer? None for refuse cases (no gold)."""
+    if case["check"] == "refuse":
+        return None
+    return any(q.ok and query_has_gold(q.data, case["check"], gold_df) for q in queries)
+
+def diagnose(passed: bool, exec_match: bool | None) -> str:
+    """Combine the answer score and the execution match into one failure label."""
+    if exec_match is None:                      # refuse cases
+        return "correct" if passed else "missed_refusal"
+    if passed and exec_match:
+        return "correct"
+    if passed:
+        return "pass_unverified"
+    if exec_match:
+        return "reporting_error"
+    return "sql_error"

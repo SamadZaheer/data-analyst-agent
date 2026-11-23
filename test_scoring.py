@@ -2,8 +2,9 @@
 import pandas as pd
 
 from prompts import SYSTEM_PROMPT, REFUSAL_PHRASE
-from scoring import check_numbers, check_refuse, check_top, score_case, check_must_include, extract_numbers, strip_code
+from scoring import check_numbers, check_refuse, check_top, score_case, check_must_include, extract_numbers, strip_code, execution_match, diagnose
 from eval_cases import CASES
+from types import SimpleNamespace
 
 gold_273 = pd.DataFrame({"fatal_crashes": [273]})
 gold_two = pd.DataFrame({"fatal_crashes": [273], "deaths": [302]})
@@ -161,3 +162,51 @@ for bad_case, gold in [({"id": "typo", "check": "number"}, g_273),
         print(f"✅ raises ValueError: {e}")
 
 print(f"\n{len(sc_cases) + 2 - sc_failures}/{len(sc_cases) + 2} score_case tests passed")
+
+# --- Execution match (fake query records, no API) --------------------------
+def q(df=None, ok=True):
+    return SimpleNamespace(ok=ok, data=df)
+
+c_num = by_id["fatal_crashes_2024"]
+c_top = by_id["top_day_2024"]
+c_ratio = by_id["deaths_per_fatal_crash_2024"]
+c_ref = by_id["car_brand"]
+g_ratio = pd.DataFrame({"deaths_per_fatal_crash": [302 / 273]})
+
+em_cases = [
+    # (description, case, queries, gold, expected)
+    ("right query",          c_num,   [q(pd.DataFrame({"n": [273]}))],                    g_273,   True),
+    ("wrong number",         c_num,   [q(pd.DataFrame({"n": [2738]}))],                   g_273,   False),
+    ("error, then right",    c_num,   [q(ok=False), q(pd.DataFrame({"n": [273]}))],       g_273,   True),
+    ("only an error",        c_num,   [q(ok=False)],                                      g_273,   False),
+    ("no queries at all",    c_num,   [],                                                 g_273,   False),
+    ("SQL rounded ratio",    c_ratio, [q(pd.DataFrame({"r": [1.11]}))],                   g_ratio, True),
+    ("top, count first col", c_top,   [q(pd.DataFrame({"n": [1500, 1409], "day": ["Friday", "Tuesday"]}))], g_day, True),
+    ("top, sorted wrong way",c_top,   [q(pd.DataFrame({"day": ["Sunday", "Friday"], "n": [1100, 1500]}))],  g_day, False),
+    ("refuse case",          c_ref,   [],                                                 None,    None),
+]
+
+em_failures = 0
+for desc, case, queries, gold, expected in em_cases:
+    got = execution_match(case, queries, gold)
+    ok = got == expected
+    em_failures += not ok
+    print(f"{'✅' if ok else '❌'} {desc:22} expected={expected!s:5} got={got!s:5}")
+
+diag_cases = [
+    # (passed, exec_match, expected label)
+    (True,  True,  "correct"),
+    (True,  False, "pass_unverified"),
+    (False, True,  "reporting_error"),
+    (False, False, "sql_error"),
+    (True,  None,  "correct"),
+    (False, None,  "missed_refusal"),
+]
+for passed, em, expected in diag_cases:
+    got = diagnose(passed, em)
+    ok = got == expected
+    em_failures += not ok
+    print(f"{'✅' if ok else '❌'} diagnose({passed!s:5}, {em!s:5}) = {got}")
+
+total = len(em_cases) + len(diag_cases)
+print(f"\n{total - em_failures}/{total} execution/diagnose tests passed")
